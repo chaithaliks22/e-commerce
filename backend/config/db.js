@@ -3,41 +3,51 @@ import mongoose from 'mongoose';
 let memoryServer = null;
 
 export const connectDB = async () => {
-  const primaryUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mini_ecommerce';
+  const primaryUri = process.env.MONGO_URI;
 
-  try {
-    // Attempt connecting to the configured MongoDB URI (Local or Atlas)
-    const conn = await mongoose.connect(primaryUri, {
-      serverSelectionTimeoutMS: 2500, // Quick fail if local MongoDB is not running
-    });
-    console.log(`[Database] MongoDB Connected: ${conn.connection.host}`);
-    return conn;
-  } catch (error) {
-    console.warn(`[Database] Could not connect to primary MongoDB at ${primaryUri}. Reason: ${error.message}`);
-
-    if (process.env.NODE_ENV !== 'production') {
-      try {
-        console.log('[Database] Starting in-memory MongoDB server for development...');
-        const { MongoMemoryServer } = await import('mongodb-memory-server');
-        memoryServer = await MongoMemoryServer.create();
-        const memUri = memoryServer.getUri();
-        
-        const conn = await mongoose.connect(memUri);
-        console.log(`[Database] In-Memory MongoDB connected successfully at ${memUri}`);
-        
-        // Auto-seed in-memory database so the developer has immediate sample data
-        const { seedDataIfEmpty } = await import('../seed/seedProducts.js');
-        await seedDataIfEmpty();
-
-        return conn;
-      } catch (memError) {
-        console.error(`[Database] In-memory MongoDB initialization failed:`, memError);
-        process.exit(1);
-      }
-    } else {
-      console.error(`[Database] Fatal: Unable to connect to MongoDB in production.`);
-      process.exit(1);
+  if (primaryUri && !primaryUri.includes('127.0.0.1')) {
+    try {
+      console.log(`[Database] Connecting to MongoDB: ${primaryUri.replace(/:([^:@]{4})[^:@]*@/, ':****@')}`);
+      const conn = await mongoose.connect(primaryUri, {
+        serverSelectionTimeoutMS: 5000,
+      });
+      console.log(`[Database] Connected successfully to MongoDB: ${conn.connection.host}`);
+      return conn;
+    } catch (error) {
+      console.warn(`[Database] Could not connect to remote MongoDB. Reason: ${error.message}`);
     }
+  } else if (primaryUri) {
+    // Local MongoDB attempt
+    try {
+      const conn = await mongoose.connect(primaryUri, {
+        serverSelectionTimeoutMS: 2000,
+      });
+      console.log(`[Database] Connected to local MongoDB: ${conn.connection.host}`);
+      return conn;
+    } catch (error) {
+      console.warn(`[Database] Local MongoDB not reachable at ${primaryUri}.`);
+    }
+  }
+
+  // Graceful fallback to in-memory MongoDB for local dev or cloud demo deployments
+  try {
+    console.log('[Database] Starting in-memory MongoDB instance for demo / development...');
+    const { MongoMemoryServer } = await import('mongodb-memory-server');
+    memoryServer = await MongoMemoryServer.create();
+    const memUri = memoryServer.getUri();
+
+    const conn = await mongoose.connect(memUri);
+    console.log(`[Database] In-Memory MongoDB connected successfully at ${memUri}`);
+    console.log('[Database] Notice: To persist data permanently, add your MONGO_URI in Render environment variables.');
+
+    // Auto-seed initial products and demo accounts
+    const { seedDataIfEmpty } = await import('../seed/seedProducts.js');
+    await seedDataIfEmpty();
+
+    return conn;
+  } catch (memError) {
+    console.error('[Database] Failed to initialize in-memory database:', memError);
+    process.exit(1);
   }
 };
 
